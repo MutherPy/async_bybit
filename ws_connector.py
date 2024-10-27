@@ -23,7 +23,7 @@ class NatsBybitClient:
 
     async def _process_normal_message(self, message):
         try:
-            self.callback(message)
+            # self.callback(message)
             await asyncio.sleep(0)
             self.breaker += 1
             if self.breaker % 5 == 0:

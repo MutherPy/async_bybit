@@ -9,6 +9,7 @@ from choices import OpTypes
 from uuid import uuid4
 from itertools import count
 
+from pprint import pprint
 
 @dataclass
 class Symbol:
@@ -64,7 +65,7 @@ class SubscriptionsManagerComponent:
 
     def get_connection(self) -> Optional[ClientConnectionMeta]:
         try:
-            return next(iter(self.__connections.values()))
+            return next(iter([con for con in self.__connections.values() if con.is_alive]))
         except StopIteration:
             return None
 
@@ -76,18 +77,21 @@ class SubscriptionsManagerComponent:
     def set_connection_dead(self, connection: ClientConnection):
         self.__connections[connection].is_alive = False
 
-    def add_conn_symbol(self, connection: ClientConnection, symbol: str, topic: str, sub_req_id: str):
+    def add_conn_symbol(self, connection: ClientConnection, sub_data: dict):
         current_connection_meta: ClientConnectionMeta = self.__connections[connection]
-        s = Symbol(symbol=symbol, topic=topic, connection_meta=current_connection_meta, sub_req_id=sub_req_id)
-        self.__subscribed_symbols[symbol] = s
-        current_connection_meta.symbols[symbol] = self.__subscribed_symbols[symbol]
+        sub_req_id = sub_data['req_id']
+        for topic in sub_data['args']:
+            symbol = topic.split('.')[-1]
+            s = Symbol(symbol=symbol, topic=topic, connection_meta=current_connection_meta, sub_req_id=sub_req_id)
+            self.__subscribed_symbols[symbol] = s
+            current_connection_meta.symbols[symbol] = self.__subscribed_symbols[symbol]
 
     def re_add_conn_symbol(self, connection: ClientConnection, symbols: list[Symbol], req_id: str):
         conn_meta = self.__connections[connection]
         for s in symbols:
             s.connection_meta = conn_meta
             s.sub_req_id = req_id
-        conn_meta.symbols = symbols
+            conn_meta.symbols[s.symbol] = s
 
     def get_conn_symbol(self, connection: ClientConnection, symbol: Optional[str] = None) -> Union[Symbol, list[Symbol]]:
         if symbol:
@@ -160,7 +164,7 @@ class NatsBybitStreamManager:
         self.subs_component = SubscriptionsManagerComponent()
         # TODO add conn-task container for killing streams
 
-    async def sub_processor(self, formed_msg: dict, symbol_topic_map: dict[str, str]):
+    async def sub_processor(self, formed_msg: dict):
         conn = 0
         if conn_meta := self.subs_component.get_connection():
             conn = conn_meta.connection
@@ -171,7 +175,7 @@ class NatsBybitStreamManager:
                     conn = conn_meta.connection
                     break
                 await asyncio.sleep(0)
-        self.subs_component.add_conn_symbol()
+        self.subs_component.add_conn_symbol(connection=conn, sub_data=formed_msg)
         await conn.send(json.dumps(formed_msg))
 
     def subscribe(self, topic_tmpl, symbol):
@@ -191,11 +195,10 @@ class NatsBybitStreamManager:
 
         allowed_to_sub: list[str] = self.subs_component.filter_symbols(symbols=symbol)
         if not allowed_to_sub:
-            print(allowed_to_sub)
+            print(f'{allowed_to_sub=}')
             return
         prepared_sub_args: list[str] = prepare_subscription_args(allowed_to_sub)
-        formed_msg: dict = self._form_message(OpTypes.SUB, list(prepared_sub_args.values()))
-        # TODO record symbols in component
+        formed_msg: dict = self._form_message(OpTypes.SUB, list(prepared_sub_args))
         asyncio.create_task(self.sub_processor(formed_msg))
 
     def _form_message(self, op_type: OpTypes, args: list[str]):
@@ -213,17 +216,16 @@ class NatsBybitStreamManager:
 
     async def __resubscribe(self, last_connection, current_connection):
         if current_connection and last_connection:
-            print(f'resubscribe {current_connection=} {last_connection=}')
+            pprint(f'resubscribe \n{current_connection=} \n{last_connection=}')
             # FIXME retunr []
             last_conn_symbols: list[Symbol] = self.subs_component.get_conn_symbol(last_connection)
-            print(last_conn_symbols)
+            pprint(f'{last_conn_symbols=}')
             last_topics = [s.topic for s in last_conn_symbols]
-            print(last_topics)
+            # print(last_topics)
             formed_msg: dict = self._form_message(OpTypes.SUB, last_topics)
-            print(formed_msg)
+            pprint(formed_msg)
             await current_connection.send(json.dumps(formed_msg))
             print('resub sent')
-            self.subs_component.set_connection_dead(last_connection)
             # self.subs_component.remove_connection(last_connection)
             self.subs_component.re_add_conn_symbol(current_connection, last_conn_symbols, formed_msg['req_id'])
 
@@ -238,7 +240,7 @@ class NatsBybitStreamManager:
             self.subs_component.add_connection(conn_id=resp['conn_id'], connection=connection)
             current_connection = connection
             try:
-                print(self.subs_component.get_connection())
+                # print(self.subs_component.get_connection())
                 task = asyncio.create_task(self._handle_incoming_message(current_connection))
                 await self.__resubscribe(last_connection, current_connection)
                 await task
@@ -246,6 +248,7 @@ class NatsBybitStreamManager:
                 last_connection = connection
                 task.cancel()
                 print('crush', str(e), type(e))
+                self.subs_component.set_connection_dead(last_connection)
             else:
                 print('regular')
 
