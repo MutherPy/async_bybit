@@ -21,14 +21,16 @@ class NatsBybitClient:
         topic_tmpl = "tickers.{symbol}"
         self.ws_manager.subscribe(topic_tmpl, symbol)
 
+    def kline_stream_unsub(self, symbol: Union[str, Iterable]):
+        self.ws_manager.unsubscribe(symbol)
+
+    def ticker_stream_unsub(self, symbol: Union[str, Iterable]):
+        self.ws_manager.unsubscribe(symbol)
+
     async def _process_normal_message(self, message):
         try:
-            # self.callback(message)
+            self.callback(message)
             await asyncio.sleep(0)
-            self.breaker += 1
-            if self.breaker % 5 == 0:
-                self.breaker = 0
-                raise ValueError('breaker')
         except Exception as e:
             print('_process_normal_message', e)
             raise e
@@ -39,12 +41,11 @@ class NatsBybitClient:
         t = cls(callback, symbols_per_stream)
         lst = [
             'BTCUSDT',
-            'ETHUSDT'
-            # 'BNBPERP',
-            # 'BNBUSDT',
-            # 'BNTUSDT',
-            # 'CETUSUSDT',
-            # 'CFXUSDT',
+            'ETHUSDT',
+            'BNBUSDT',
+            'BNTUSDT',
+            'CETUSUSDT',
+            'CFXUSDT',
         ]
         interval = '60'
         t.kline_stream_sub(interval, lst)
@@ -59,5 +60,5 @@ class NatsBybitClient:
 
 loop = asyncio.new_event_loop()
 asyncio.set_event_loop(loop)
-loop.call_soon(NatsBybitClient.start, print, 10)
+loop.call_soon(NatsBybitClient.start, print, 4)
 loop.run_forever()

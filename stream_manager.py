@@ -11,6 +11,7 @@ from itertools import count
 
 from pprint import pprint
 
+
 @dataclass
 class Symbol:
     symbol: str
@@ -163,6 +164,7 @@ class NatsBybitStreamManager:
         self._process_normal_message = normal_callback
         self.subs_component = SubscriptionsManagerComponent()
         # TODO add conn-task container for killing streams
+        self.streams = {}
 
     async def sub_processor(self, formed_msg: dict):
         conn = 0
@@ -177,6 +179,8 @@ class NatsBybitStreamManager:
                 await asyncio.sleep(0)
         self.subs_component.add_conn_symbol(connection=conn, sub_data=formed_msg)
         await conn.send(json.dumps(formed_msg))
+
+    # TODO add unsub mechanism
 
     def subscribe(self, topic_tmpl, symbol):
         def prepare_subscription_args(list_of_symbols) -> list[str]:
@@ -201,6 +205,11 @@ class NatsBybitStreamManager:
         formed_msg: dict = self._form_message(OpTypes.SUB, list(prepared_sub_args))
         asyncio.create_task(self.sub_processor(formed_msg))
 
+    def unsubscribe(self, symbol):
+        if isinstance(symbol, str):
+            symbol = [symbol]
+        ...
+
     def _form_message(self, op_type: OpTypes, args: list[str]):
         if op_type not in OpTypes:
             raise ValueError(f'{op_type=}')
@@ -217,7 +226,6 @@ class NatsBybitStreamManager:
     async def __resubscribe(self, last_connection, current_connection):
         if current_connection and last_connection:
             pprint(f'resubscribe \n{current_connection=} \n{last_connection=}')
-            # FIXME retunr []
             last_conn_symbols: list[Symbol] = self.subs_component.get_conn_symbol(last_connection)
             pprint(f'{last_conn_symbols=}')
             last_topics = [s.topic for s in last_conn_symbols]
@@ -239,6 +247,7 @@ class NatsBybitStreamManager:
                 raise RuntimeError('ne sucses')
             self.subs_component.add_connection(conn_id=resp['conn_id'], connection=connection)
             current_connection = connection
+            self.streams[connection] = asyncio.current_task()
             try:
                 # print(self.subs_component.get_connection())
                 task = asyncio.create_task(self._handle_incoming_message(current_connection))
@@ -246,7 +255,6 @@ class NatsBybitStreamManager:
                 await task
             except Exception as e:
                 last_connection = connection
-                task.cancel()
                 print('crush', str(e), type(e))
                 self.subs_component.set_connection_dead(last_connection)
             else:
@@ -255,14 +263,17 @@ class NatsBybitStreamManager:
     async def _process_subscription_message(self, message: dict, connection: ClientConnection):
         if message['success']:
             req_id = message['req_id']
+        print(message)
 
     async def _process_unsubscription_message(self, message: dict, connection: ClientConnection):
-        ...
+        print(message)
 
     async def _handle_incoming_message(self, connection: ClientConnection):
+        c = 0
         while True:
             try:
                 msg = await connection.recv()
+                # print('rcv', connection)
                 message = json.loads(msg)
 
                 def is_normal_message():
